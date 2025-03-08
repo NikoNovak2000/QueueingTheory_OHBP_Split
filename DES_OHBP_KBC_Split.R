@@ -1,91 +1,49 @@
-# Učitavanje potrebnih paketa
+install.packages(c("simmer", "simmer.plot"))
+
 library(simmer)
+library(simmer.plot)
 
-# Inicijalizacija simulacije
-hospital_sim <- simmer("Hitni Prijem KBC Split")
+# Set seed to make the results reproducible
+set.seed(2)
 
-# Definiranje parametara na temelju podataka OHBP KBC Split
-prosjecni_dolasci <- runif(1, 300, 500) / 1440  # Nasumičan broj pacijenata između 300 i 500 dnevno
-broj_doktora <- 32  # Broj liječnika koji dežuraju u 24 sata
+# Create a patient every 3 minutes
+P_INTER <- function() round(rnorm(1, mean = 3, sd = 1.5), 1)
 
-# Funkcija za dodjelu hitnosti pacijenta
-odredi_hitnost <- function() {
-  sample(1:4, 1, prob = c(0.1, 0.3, 0.4, 0.2))  # 1 = crveni, 2 = žuti, 3 = zeleni, 4 = plavi
+# Number of workers in triage
+NUM_TRIAGE_WORKER <- 3
+
+# Time(MINUTES) required to examine patients in triage
+TRIAGE_TIME <- function() round(rnorm(1, mean = 5, sd = 3), 1)
+
+# Number of doctors in OHBP
+NUM_DOCTORS <- 32
+
+# Patient categories
+PATIENT_CATEGORY <- c("Red", "Yellow", "Green", "Blue")
+# Blue are non-urgent, can be sent to their primary care
+# Green are less urgent, but require medical attention
+# Yellow are serious cases, but stable
+# Red are critical cases, required immediate attention
+
+# Probability distribution for each category
+PROBABILITY_CATEGORY <- c(0.05, 0.20, 0.50, 0.25)
+
+# Function to randomly assign a category
+ASSIGN_CATEGORY <- function() { 
+  sample(PATIENT_CATEGORY, size = 1, prob = PROBABILITY_CATEGORY)
 }
 
-# Funkcija za određivanje vremena trijaže (eksponencijalna distribucija)
-vrijeme_trijaze <- function() {
-  rexp(1, 1/10)  # Prosječno 10 minuta za trijažu
+# Help time or examination by doctors time is calculated based on the category of the patients cases
+HELP_TIME <- function(category) {
+  if (category == "Blue") {
+    return(0)  # No medical attention, sent to primary care
+  } else if (category == "Green") {
+    return(round(rnorm(1, mean = 60, sd = 20), 1))  # Less urgent cases
+  } else if (category == "Yellow") {
+    return(round(rnorm(1, mean = 160, sd = 25), 1))  # Serious cases
+  } else if (category == "Red") {
+    return(round(rnorm(1, mean = 240, sd = 30), 1))  # Critical cases
+  } else {
+    return(NA)  # Fallback in case of an error
+  }
 }
-
-# Funkcija za određivanje vremena obrade pacijenta prema hitnosti
-vrijeme_obrade <- function(hitnost) {
-  switch(as.character(hitnost),
-         "1" = rexp(1, 1/60),   # Kritični pacijenti (kraće vrijeme obrade)
-         "2" = rexp(1, 1/120),  # Ozbiljni pacijenti
-         "3" = rexp(1, 1/180),  # Manje hitni pacijenti
-         "4" = rexp(1, 1/240))  # Nehitni pacijenti
-}
-
-# Funkcija za određivanje prioriteta (manji broj = veći prioritet)
-prioritet_pacijenta <- function(hitnost) {
-  return(hitnost)  # Crveni (1) ima najviši prioritet, plavi (4) najniži
-}
-
-# Kreiranje procesa pacijenta
-patient_trajectory <- trajectory("Put pacijenta") %>%
-  seize("trijaza", 1) %>%  # Pacijent dolazi na trijažu
-  timeout(vrijeme_trijaze) %>%  # Vrijeme trajanja trijaže
-  set_attribute("hitnost", function() {
-    h <- odredi_hitnost()
-    return(h)
-  }) %>%  # Određivanje hitnosti
-  release("trijaza", 1) %>%  # Oslobađanje trijažnog osoblja
-  branch(
-    function(attrs) attrs["hitnost"],
-    continue = c(TRUE, TRUE, TRUE, TRUE),
-    trajectory("Crveni") %>%
-      set_prioritization(c(1, 7, TRUE)) %>%
-      seize("doktor", 1) %>%
-      timeout(function(attrs) vrijeme_obrade(attrs["hitnost"])) %>%
-      release("doktor", 1),
-    trajectory("Žuti") %>%
-      set_prioritization(c(2, 7, TRUE)) %>%
-      seize("doktor", 1) %>%
-      timeout(function(attrs) vrijeme_obrade(attrs["hitnost"])) %>%
-      release("doktor", 1),
-    trajectory("Zeleni") %>%
-      set_prioritization(c(3, 7, TRUE)) %>%
-      seize("doktor", 1) %>%
-      timeout(function(attrs) vrijeme_obrade(attrs["hitnost"])) %>%
-      release("doktor", 1),
-    trajectory("Plavi") %>%
-      set_prioritization(c(4, 7, TRUE)) %>%
-      seize("doktor", 1) %>%
-      timeout(function(attrs) vrijeme_obrade(attrs["hitnost"])) %>%
-      release("doktor", 1)
-  )
-
-# Dodavanje resursa (trijaža i doktori) i generatora pacijenata
-hospital_sim %>%
-  add_resource("trijaza", capacity = 5) %>%  # Pretpostavka: 5 trijažnih mjesta
-  add_resource("doktor", capacity = broj_doktora, preemptive = TRUE) %>%
-  add_generator("Pacijent", patient_trajectory, function() rexp(1, prosjecni_dolasci))
-
-# Pokretanje simulacije na 24 sata
-hospital_sim %>% run(until = 1440)
-
-# Analiza rezultata
-arrivals <- get_mon_arrivals(hospital_sim)
-resources <- get_mon_resources(hospital_sim)
-
-# Izračun prosječnog vremena aktivnosti pacijenata (trijaža + obrada)
-mean_activity_time <- mean(arrivals$activity_time)
-
-# Izračun prosječnog vremena čekanja
-waiting_times <- (arrivals$end_time - arrivals$start_time) - arrivals$activity_time
-mean_waiting_time <- mean(waiting_times)
-
-# Ispis rezultata
-mean_activity_time
-mean_waiting_time
