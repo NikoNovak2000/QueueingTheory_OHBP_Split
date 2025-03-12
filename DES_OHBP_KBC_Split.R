@@ -75,7 +75,7 @@ triage_trajectory <- trajectory() %>%
   release("triage_worker") %>%
   join(doctor_trajectory)
 
-plot(triage_trajectory, verbose = TRUE)
+plot(doctor_trajectory, verbose = TRUE)
 
 env <- simmer("hospital")
 
@@ -86,5 +86,29 @@ env %>%
   add_generator("patient", triage_trajectory, P_INTER) %>%  # Patients arrive every 3 min
   run(until = 1440)
 
+# Gather information about patient arrivals in simulation
+patient_arr <- get_mon_arrivals(env)
 
-get_mon_arrivals(env)
+# Gather information about resources in the simulation (doctors and triage_workers)
+res <- get_mon_resources(env)
+
+# Gather information about patient attributes
+patient_attrs <- get_mon_attributes(env)
+
+# Amount of time spent in active state
+plot(patient_arr, metric="activity_time")
+
+# Amount of time spent waiting
+plot(patient_arr, metric = "waiting_time")
+
+# Amount of time spent in the system
+plot(patient_arr, metric = "flow_time")
+
+# Average resource utilization (total time in use divided by the total simulation time)
+plot(res, metric="utilization")
+
+# Resource usage throughout the simulation
+plot(res, metric="usage", items=c("queue", "server"), steps=TRUE)
+
+
+
